@@ -1,0 +1,18 @@
+<div class="auth-card">
+  <h2>Login</h2>
+
+  <input type="email" placeholder="Email" [(ngModel)]="email" />
+
+  <input type="password" placeholder="Password" [(ngModel)]="password" />
+
+  @if (errorMessage) {
+    <p class="error">{{ errorMessage }}</p>
+  }
+
+  <button (click)="login()">Login</button>
+
+  <p>
+    Don't have an account?
+    <button class="link-btn" (click)="switchToRegister.emit()">Register</button>
+  </p>
+</div>

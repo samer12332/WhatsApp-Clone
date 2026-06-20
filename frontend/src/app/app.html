@@ -1,0 +1,13 @@
+<div class="app-container">
+  @if (currentView === 'login') {
+    <app-login (loginSuccess)="handleAuthSuccess($event)" (switchToRegister)="showRegister()" />
+  }
+
+  @if (currentView === 'register') {
+    <app-register (registerSuccess)="handleAuthSuccess($event)" (switchToLogin)="showLogin()" />
+  }
+
+  @if (currentView === 'chat') {
+    <app-chat [currentUser]="currentUser" (logoutClicked)="logout()" />
+  }
+</div>

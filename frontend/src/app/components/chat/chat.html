@@ -1,0 +1,233 @@
+<div class="chat-shell">
+  <aside class="sidebar" [class.hidden-mobile]="mobileConversationView">
+    <div class="sidebar-top">
+      <div>
+        <p class="eyebrow">Simple WhatsApp Clone</p>
+        <h1>Chats</h1>
+      </div>
+
+      <button class="ghost-btn" (click)="logout()">Logout</button>
+    </div>
+
+    <div class="profile-card">
+      <div class="avatar">{{ getAvatarLetter(currentUser?.username || 'U') }}</div>
+      <div>
+        <strong>{{ currentUser?.username || 'User' }}</strong>
+        <p>{{ currentUser?.email }}</p>
+      </div>
+    </div>
+
+    <div class="search-box">
+      <input type="text" placeholder="Search conversations or people" [(ngModel)]="searchTerm" />
+    </div>
+
+    <div class="sidebar-actions">
+      <button (click)="toggleUserPicker()">New chat</button>
+      <button class="secondary-btn" (click)="toggleGroupCreator()">New group</button>
+    </div>
+
+    @if (statusMessage) {
+      <p class="status-banner success">{{ statusMessage }}</p>
+    }
+
+    @if (errorMessage) {
+      <p class="status-banner error">{{ errorMessage }}</p>
+    }
+
+    @if (showUserPicker) {
+      <section class="panel-card">
+        <div class="panel-head">
+          <h2>Start private chat</h2>
+          <button class="icon-btn" (click)="toggleUserPicker()">Close</button>
+        </div>
+
+        <div class="picker-list">
+          @for (user of filteredUsers; track user._id) {
+            <button
+              class="picker-item"
+              [disabled]="openingPrivateChatUserId === user._id"
+              (click)="startPrivateChat(user)"
+            >
+              <span class="mini-avatar">{{ getAvatarLetter(user.username) }}</span>
+              <span>
+                <strong>{{ user.username }}</strong>
+                <small>{{ user.email }}</small>
+              </span>
+            </button>
+          }
+
+          @if (!filteredUsers.length) {
+            <div class="empty-sidebar">
+              <p>No other users found.</p>
+              <small>Register another account to start a private chat.</small>
+            </div>
+          }
+        </div>
+      </section>
+    }
+
+    @if (showGroupCreator) {
+      <section class="panel-card">
+        <div class="panel-head">
+          <h2>Create group</h2>
+          <button class="icon-btn" (click)="toggleGroupCreator()">Close</button>
+        </div>
+
+        <input type="text" placeholder="Group name" [(ngModel)]="groupName" />
+
+        <div class="selection-grid">
+          @for (user of filteredUsers; track user._id) {
+            <button
+              class="select-pill"
+              [class.active]="selectedGroupMemberIds.has(user._id)"
+              (click)="toggleGroupMember(user._id)"
+            >
+              {{ user.username }}
+            </button>
+          }
+        </div>
+
+        <button (click)="createGroup()">Create group</button>
+      </section>
+    }
+
+    <div class="conversation-list">
+      @for (conversation of filteredConversations; track conversation._id) {
+        <button
+          class="conversation-item"
+          [class.active]="selectedConversation?._id === conversation._id"
+          (click)="selectConversation(conversation)"
+        >
+          <div class="avatar conversation-avatar">
+            {{ getAvatarLetter(getConversationName(conversation)) }}
+          </div>
+
+          <div class="conversation-body">
+            <div class="conversation-row">
+              <strong>{{ getConversationName(conversation) }}</strong>
+              <span>{{ getConversationTimestamp(conversation) }}</span>
+            </div>
+
+            <p>{{ getConversationPreview(conversation) }}</p>
+          </div>
+        </button>
+      }
+
+      @if (!filteredConversations.length) {
+        <div class="empty-sidebar">
+          <p>No conversations yet.</p>
+          <small>Start a private chat or create a group to begin.</small>
+        </div>
+      }
+    </div>
+  </aside>
+
+  <section class="chat-panel" [class.active-mobile]="mobileConversationView || !selectedConversation">
+    @if (selectedConversation) {
+      <header class="chat-header">
+        <div class="chat-header-main">
+          <button class="back-btn" (click)="backToSidebar()">Back</button>
+          <div class="avatar conversation-avatar">
+            {{ getAvatarLetter(getConversationName(selectedConversation)) }}
+          </div>
+          <div>
+            <h2>{{ getConversationName(selectedConversation) }}</h2>
+            <p>{{ getMemberSubtitle(selectedConversation) }}</p>
+          </div>
+        </div>
+
+        @if (selectedConversation.type === 'group') {
+          <button class="ghost-btn" (click)="toggleGroupDetails()">Manage group</button>
+        }
+      </header>
+
+      @if (showGroupDetails && selectedConversation.type === 'group') {
+        <section class="details-card">
+          <div class="details-row">
+            <input type="text" placeholder="Rename group" [(ngModel)]="renameGroupName" />
+            <button [disabled]="!isCurrentUserAdmin" (click)="renameSelectedGroup()">Rename</button>
+          </div>
+
+          <div class="details-row stacked">
+            <strong>Members</strong>
+            <div class="member-list">
+              @for (member of selectedConversation.members; track member._id) {
+                <div class="member-item">
+                  <span>{{ member.username }}</span>
+                  @if (isCurrentUserAdmin && member._id !== currentUser?.id) {
+                    <button class="danger-link" (click)="removeMember(member._id)">Remove</button>
+                  }
+                </div>
+              }
+            </div>
+          </div>
+
+          @if (isCurrentUserAdmin && availableMembersToAdd.length) {
+            <div class="details-row stacked">
+              <strong>Add members</strong>
+              <div class="selection-grid compact">
+                @for (user of availableMembersToAdd; track user._id) {
+                  <button
+                    class="select-pill"
+                    [class.active]="selectedAdditionalMemberIds.has(user._id)"
+                    (click)="toggleAdditionalMember(user._id)"
+                  >
+                    {{ user.username }}
+                  </button>
+                }
+              </div>
+              <button (click)="addSelectedMembers()">Add selected</button>
+            </div>
+          }
+
+          <button class="danger-btn" (click)="leaveCurrentGroup()">Leave group</button>
+        </section>
+      }
+
+      <div class="messages-area">
+        @for (message of messages; track message._id) {
+          <div class="message-row" [class.own]="isOwnMessage(message)">
+            <div class="message-bubble">
+              @if (!isOwnMessage(message) && selectedConversation.type === 'group') {
+                <strong class="sender-name">{{ message.sender.username }}</strong>
+              }
+              <p>{{ message.text }}</p>
+              <span class="timestamp">{{ formatMessageTime(message.createdAt) }}</span>
+            </div>
+          </div>
+        }
+
+        @if (typingText) {
+          <p class="typing-indicator">{{ typingText }}</p>
+        }
+
+        @if (!messages.length) {
+          <div class="empty-chat">
+            <div>
+              <h3>No messages yet</h3>
+              <p>Send the first message and kick off the conversation.</p>
+            </div>
+          </div>
+        }
+      </div>
+
+      <div class="composer">
+        <input
+          type="text"
+          placeholder="Type a message"
+          [(ngModel)]="messageText"
+          (ngModelChange)="handleComposerChange()"
+          (keyup.enter)="sendMessage()"
+        />
+        <button (click)="sendMessage()">Send</button>
+      </div>
+    } @else {
+      <div class="empty-state">
+        <div class="empty-state-card">
+          <h2>Welcome back{{ currentUser?.username ? ', ' + currentUser?.username : '' }}</h2>
+          <p>Select a conversation from the sidebar, start a private chat, or create a group.</p>
+        </div>
+      </div>
+    }
+  </section>
+</div>
