@@ -19,7 +19,7 @@ const messageSchema = new mongoose.Schema(
         },
         messageType: {
             type: String,
-            enum: ["text"],
+            enum: ["text", "system"],
             default: "text",
         },
         readBy: [

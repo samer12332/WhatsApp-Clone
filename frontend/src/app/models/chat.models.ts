@@ -12,7 +12,7 @@ export interface ChatMessage {
   conversation: string;
   sender: ChatUser;
   text: string;
-  messageType: 'text';
+  messageType: 'text' | 'system';
   readBy: ChatUser[];
   deliveredTo: ChatUser[];
   createdAt: string;
@@ -26,6 +26,7 @@ export interface Conversation {
   members: ChatUser[];
   admins: ChatUser[];
   lastMessage: ChatMessage | null;
+  unreadCount?: number;
   createdAt: string;
   updatedAt: string;
 }

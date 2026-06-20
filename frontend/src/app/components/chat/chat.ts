@@ -1,4 +1,13 @@
-import { Component, EventEmitter, Input, OnDestroy, OnInit, Output } from '@angular/core';
+import {
+  Component,
+  ElementRef,
+  EventEmitter,
+  Input,
+  OnDestroy,
+  OnInit,
+  Output,
+  ViewChild,
+} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Subscription } from 'rxjs';
 
@@ -23,6 +32,7 @@ import {
 export class Chat implements OnInit, OnDestroy {
   @Input() currentUser: AuthUser | null = null;
   @Output() logoutClicked = new EventEmitter<void>();
+  @ViewChild('messagesContainer') private messagesContainer?: ElementRef<HTMLDivElement>;
 
   searchTerm = '';
   messageText = '';
@@ -124,6 +134,17 @@ export class Chat implements OnInit, OnDestroy {
     this.errorMessage = '';
   }
 
+  openGroupManagement(): void {
+    this.showGroupDetails = true;
+    this.errorMessage = '';
+    this.statusMessage = '';
+  }
+
+  closeGroupManagement(): void {
+    this.showGroupDetails = false;
+    this.errorMessage = '';
+  }
+
   toggleGroupMember(userId: string): void {
     if (this.selectedGroupMemberIds.has(userId)) {
       this.selectedGroupMemberIds.delete(userId);
@@ -220,15 +241,20 @@ export class Chat implements OnInit, OnDestroy {
     }
 
     this.activeConversationRoomId = conversation._id;
-    this.selectedConversation = conversation;
+    this.selectedConversation = {
+      ...conversation,
+      unreadCount: 0,
+    };
     this.mobileConversationView = true;
     this.socketService.joinConversation(conversation._id);
+    this.upsertConversation(this.selectedConversation);
 
     this.subscriptions.add(
       this.chatService.getMessages(conversation._id).subscribe({
         next: (messages) => {
           this.messages = messages;
           this.markVisibleMessagesAsRead();
+          this.scrollMessagesToBottom();
         },
         error: (error) => {
           this.errorMessage = error.error?.message || 'Unable to load messages';
@@ -366,6 +392,11 @@ export class Chat implements OnInit, OnDestroy {
   }
 
   backToSidebar(): void {
+    if (this.showGroupDetails) {
+      this.closeGroupManagement();
+      return;
+    }
+
     this.mobileConversationView = false;
   }
 
@@ -387,6 +418,10 @@ export class Chat implements OnInit, OnDestroy {
       return conversation.type === 'group' ? 'Group created' : 'Start the conversation';
     }
 
+    if (conversation.lastMessage.messageType === 'system') {
+      return conversation.lastMessage.text;
+    }
+
     const prefix =
       conversation.lastMessage.sender._id === this.currentUser?.id
         ? 'You: '
@@ -397,6 +432,14 @@ export class Chat implements OnInit, OnDestroy {
 
   getConversationTimestamp(conversation: Conversation): string {
     return this.formatTime(conversation.lastMessage?.createdAt || conversation.updatedAt);
+  }
+
+  getConversationUnreadCount(conversation: Conversation): number {
+    return conversation.unreadCount ?? 0;
+  }
+
+  hasUnreadMessages(conversation: Conversation): boolean {
+    return this.getConversationUnreadCount(conversation) > 0;
   }
 
   getMemberSubtitle(conversation: Conversation): string {
@@ -425,8 +468,16 @@ export class Chat implements OnInit, OnDestroy {
     return message.sender._id === this.currentUser?.id;
   }
 
+  isSystemMessage(message: ChatMessage): boolean {
+    return message.messageType === 'system';
+  }
+
   getAvatarLetter(label: string): string {
     return label.slice(0, 1).toUpperCase();
+  }
+
+  getWelcomeMessage(): string {
+    return this.currentUser?.username ? `Welcome back, ${this.currentUser.username}` : 'Welcome back';
   }
 
   formatMessageTime(value: string): string {
@@ -472,16 +523,25 @@ export class Chat implements OnInit, OnDestroy {
         if (message.conversation === this.selectedConversation?._id && !this.hasMessage(message._id)) {
           this.messages = [...this.messages, message];
           this.markMessageAsReadIfNeeded(message);
+          this.scrollMessagesToBottom();
+          return;
+        }
+
+        if (message.sender._id !== this.currentUser?.id) {
+          this.incrementUnreadCount(message.conversation);
         }
       }),
     );
 
     this.subscriptions.add(
       this.socketService.conversationUpdated$.subscribe((conversation) => {
-        this.upsertConversation(conversation);
+        this.upsertConversation(conversation, true);
 
         if (this.selectedConversation?._id === conversation._id) {
-          this.selectedConversation = conversation;
+          this.selectedConversation = {
+            ...conversation,
+            unreadCount: 0,
+          };
           this.renameGroupName = conversation.name;
         }
       }),
@@ -525,16 +585,23 @@ export class Chat implements OnInit, OnDestroy {
     );
   }
 
-  private upsertConversation(conversation: Conversation): void {
+  private upsertConversation(
+    conversation: Conversation,
+    isIncomingSocketUpdate = false,
+  ): void {
     const existingIndex = this.conversations.findIndex((item) => item._id === conversation._id);
+    const normalizedConversation = this.normalizeConversation(
+      conversation,
+      isIncomingSocketUpdate,
+    );
 
     if (existingIndex === -1) {
-      this.conversations = this.sortConversations([conversation, ...this.conversations]);
+      this.conversations = this.sortConversations([normalizedConversation, ...this.conversations]);
       return;
     }
 
     const nextConversations = [...this.conversations];
-    nextConversations[existingIndex] = conversation;
+    nextConversations[existingIndex] = normalizedConversation;
     this.conversations = this.sortConversations(nextConversations);
   }
 
@@ -583,6 +650,17 @@ export class Chat implements OnInit, OnDestroy {
     if (!alreadyRead) {
       this.socketService.markMessageRead(this.selectedConversation._id, message._id);
     }
+  }
+
+  private incrementUnreadCount(conversationId: string): void {
+    this.conversations = this.conversations.map((conversation) =>
+      conversation._id === conversationId
+        ? {
+            ...conversation,
+            unreadCount: this.getConversationUnreadCount(conversation) + 1,
+          }
+        : conversation,
+    );
   }
 
   private applyUserStatus(event: UserStatusEvent): void {
@@ -664,6 +742,46 @@ export class Chat implements OnInit, OnDestroy {
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
+    });
+  }
+
+  private normalizeConversation(
+    conversation: Conversation,
+    isIncomingSocketUpdate = false,
+  ): Conversation {
+    const existingConversation = this.conversations.find((item) => item._id === conversation._id);
+    const isSelectedConversation = this.selectedConversation?._id === conversation._id;
+    const hasNewLastMessage =
+      !!conversation.lastMessage &&
+      conversation.lastMessage._id !== existingConversation?.lastMessage?._id;
+    const isIncomingUnreadMessage =
+      isIncomingSocketUpdate &&
+      hasNewLastMessage &&
+      conversation.lastMessage?.sender._id !== this.currentUser?.id &&
+      !isSelectedConversation;
+
+    const unreadCount =
+      isSelectedConversation
+        ? 0
+        : isIncomingUnreadMessage
+          ? (existingConversation?.unreadCount ?? 0) + 1
+        : (conversation.unreadCount ?? existingConversation?.unreadCount ?? 0);
+
+    return {
+      ...conversation,
+      unreadCount,
+    };
+  }
+
+  private scrollMessagesToBottom(): void {
+    setTimeout(() => {
+      const container = this.messagesContainer?.nativeElement;
+
+      if (!container) {
+        return;
+      }
+
+      container.scrollTop = container.scrollHeight;
     });
   }
 }

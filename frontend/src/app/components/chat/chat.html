@@ -22,8 +22,20 @@
     </div>
 
     <div class="sidebar-actions">
-      <button (click)="toggleUserPicker()">New chat</button>
-      <button class="secondary-btn" (click)="toggleGroupCreator()">New group</button>
+      <button
+        class="action-toggle"
+        [class.active-action]="showUserPicker"
+        (click)="toggleUserPicker()"
+      >
+        New chat
+      </button>
+      <button
+        class="action-toggle"
+        [class.active-action]="showGroupCreator"
+        (click)="toggleGroupCreator()"
+      >
+        New group
+      </button>
     </div>
 
     @if (statusMessage) {
@@ -105,7 +117,12 @@
           <div class="conversation-body">
             <div class="conversation-row">
               <strong>{{ getConversationName(conversation) }}</strong>
-              <span>{{ getConversationTimestamp(conversation) }}</span>
+              <div class="conversation-meta">
+                <span>{{ getConversationTimestamp(conversation) }}</span>
+                @if (hasUnreadMessages(conversation)) {
+                  <span class="unread-badge">{{ getConversationUnreadCount(conversation) }}</span>
+                }
+              </div>
             </div>
 
             <p>{{ getConversationPreview(conversation) }}</p>
@@ -124,107 +141,136 @@
 
   <section class="chat-panel" [class.active-mobile]="mobileConversationView || !selectedConversation">
     @if (selectedConversation) {
-      <header class="chat-header">
-        <div class="chat-header-main">
-          <button class="back-btn" (click)="backToSidebar()">Back</button>
-          <div class="avatar conversation-avatar">
-            {{ getAvatarLetter(getConversationName(selectedConversation)) }}
-          </div>
-          <div>
-            <h2>{{ getConversationName(selectedConversation) }}</h2>
-            <p>{{ getMemberSubtitle(selectedConversation) }}</p>
-          </div>
-        </div>
-
-        @if (selectedConversation.type === 'group') {
-          <button class="ghost-btn" (click)="toggleGroupDetails()">Manage group</button>
-        }
-      </header>
-
       @if (showGroupDetails && selectedConversation.type === 'group') {
-        <section class="details-card">
-          <div class="details-row">
-            <input type="text" placeholder="Rename group" [(ngModel)]="renameGroupName" />
-            <button [disabled]="!isCurrentUserAdmin" (click)="renameSelectedGroup()">Rename</button>
-          </div>
-
-          <div class="details-row stacked">
-            <strong>Members</strong>
-            <div class="member-list">
-              @for (member of selectedConversation.members; track member._id) {
-                <div class="member-item">
-                  <span>{{ member.username }}</span>
-                  @if (isCurrentUserAdmin && member._id !== currentUser?.id) {
-                    <button class="danger-link" (click)="removeMember(member._id)">Remove</button>
-                  }
-                </div>
-              }
+        <header class="chat-header">
+          <div class="chat-header-main">
+            <button class="back-btn always-visible" (click)="closeGroupManagement()">Back</button>
+            <div class="avatar conversation-avatar">
+              {{ getAvatarLetter(getConversationName(selectedConversation)) }}
+            </div>
+            <div>
+              <h2>Manage group</h2>
+              <p>{{ getConversationName(selectedConversation) }}</p>
             </div>
           </div>
+        </header>
 
-          @if (isCurrentUserAdmin && availableMembersToAdd.length) {
-            <div class="details-row stacked">
-              <strong>Add members</strong>
-              <div class="selection-grid compact">
-                @for (user of availableMembersToAdd; track user._id) {
-                  <button
-                    class="select-pill"
-                    [class.active]="selectedAdditionalMemberIds.has(user._id)"
-                    (click)="toggleAdditionalMember(user._id)"
-                  >
-                    {{ user.username }}
-                  </button>
+        <section class="management-page">
+          <div class="management-grid">
+            <section class="details-card">
+              <h3>Group settings</h3>
+              <div class="details-row">
+                <input type="text" placeholder="Rename group" [(ngModel)]="renameGroupName" />
+                <button [disabled]="!isCurrentUserAdmin" (click)="renameSelectedGroup()">Rename</button>
+              </div>
+            </section>
+
+            <section class="details-card">
+              <h3>Members</h3>
+              <div class="member-list">
+                @for (member of selectedConversation.members; track member._id) {
+                  <div class="member-item">
+                    <span>{{ member.username }}</span>
+                    @if (isCurrentUserAdmin && member._id !== currentUser?.id) {
+                      <button class="danger-link" (click)="removeMember(member._id)">Remove</button>
+                    }
+                  </div>
                 }
               </div>
-              <button (click)="addSelectedMembers()">Add selected</button>
+            </section>
+
+            @if (isCurrentUserAdmin && availableMembersToAdd.length) {
+              <section class="details-card">
+                <h3>Add members</h3>
+                <div class="selection-grid compact">
+                  @for (user of availableMembersToAdd; track user._id) {
+                    <button
+                      class="select-pill"
+                      [class.active]="selectedAdditionalMemberIds.has(user._id)"
+                      (click)="toggleAdditionalMember(user._id)"
+                    >
+                      {{ user.username }}
+                    </button>
+                  }
+                </div>
+                <button class="fit-btn" (click)="addSelectedMembers()">Add selected</button>
+              </section>
+            }
+
+            <section class="details-card">
+              <h3>Danger zone</h3>
+              <p class="danger-copy">Leave this group conversation at any time.</p>
+              <button class="danger-btn fit-btn" (click)="leaveCurrentGroup()">Leave group</button>
+            </section>
+          </div>
+        </section>
+      } @else {
+        <header class="chat-header">
+          <div class="chat-header-main">
+            <button class="back-btn" (click)="backToSidebar()">Back</button>
+            <div class="avatar conversation-avatar">
+              {{ getAvatarLetter(getConversationName(selectedConversation)) }}
             </div>
+            <div>
+              <h2>{{ getConversationName(selectedConversation) }}</h2>
+              <p>{{ getMemberSubtitle(selectedConversation) }}</p>
+            </div>
+          </div>
+
+          @if (selectedConversation.type === 'group') {
+            <button class="ghost-btn" (click)="openGroupManagement()">Manage group</button>
+          }
+        </header>
+
+        <div #messagesContainer class="messages-area">
+          @for (message of messages; track message._id) {
+            @if (isSystemMessage(message)) {
+              <div class="system-message">
+                <span>{{ message.text }}</span>
+                <small>{{ formatMessageTime(message.createdAt) }}</small>
+              </div>
+            } @else {
+              <div class="message-row" [class.own]="isOwnMessage(message)">
+                <div class="message-bubble">
+                  @if (!isOwnMessage(message) && selectedConversation.type === 'group') {
+                    <strong class="sender-name">{{ message.sender.username }}</strong>
+                  }
+                  <p>{{ message.text }}</p>
+                  <span class="timestamp">{{ formatMessageTime(message.createdAt) }}</span>
+                </div>
+              </div>
+            }
           }
 
-          <button class="danger-btn" (click)="leaveCurrentGroup()">Leave group</button>
-        </section>
+          @if (typingText) {
+            <p class="typing-indicator">{{ typingText }}</p>
+          }
+
+          @if (!messages.length) {
+            <div class="empty-chat">
+              <div>
+                <h3>No messages yet</h3>
+                <p>Send the first message and kick off the conversation.</p>
+              </div>
+            </div>
+          }
+        </div>
+
+        <div class="composer">
+          <input
+            type="text"
+            placeholder="Type a message"
+            [(ngModel)]="messageText"
+            (ngModelChange)="handleComposerChange()"
+            (keyup.enter)="sendMessage()"
+          />
+          <button (click)="sendMessage()">Send</button>
+        </div>
       }
-
-      <div class="messages-area">
-        @for (message of messages; track message._id) {
-          <div class="message-row" [class.own]="isOwnMessage(message)">
-            <div class="message-bubble">
-              @if (!isOwnMessage(message) && selectedConversation.type === 'group') {
-                <strong class="sender-name">{{ message.sender.username }}</strong>
-              }
-              <p>{{ message.text }}</p>
-              <span class="timestamp">{{ formatMessageTime(message.createdAt) }}</span>
-            </div>
-          </div>
-        }
-
-        @if (typingText) {
-          <p class="typing-indicator">{{ typingText }}</p>
-        }
-
-        @if (!messages.length) {
-          <div class="empty-chat">
-            <div>
-              <h3>No messages yet</h3>
-              <p>Send the first message and kick off the conversation.</p>
-            </div>
-          </div>
-        }
-      </div>
-
-      <div class="composer">
-        <input
-          type="text"
-          placeholder="Type a message"
-          [(ngModel)]="messageText"
-          (ngModelChange)="handleComposerChange()"
-          (keyup.enter)="sendMessage()"
-        />
-        <button (click)="sendMessage()">Send</button>
-      </div>
     } @else {
       <div class="empty-state">
         <div class="empty-state-card">
-          <h2>Welcome back{{ currentUser?.username ? ', ' + currentUser?.username : '' }}</h2>
+          <h2>{{ getWelcomeMessage() }}</h2>
           <p>Select a conversation from the sidebar, start a private chat, or create a group.</p>
         </div>
       </div>

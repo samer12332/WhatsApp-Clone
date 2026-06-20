@@ -16,6 +16,88 @@ const ensureConversationMember = (conversation, userId) =>
 const ensureConversationAdmin = (conversation, userId) =>
     conversation.admins.some((admin) => admin._id.toString() === userId.toString());
 
+const userRoom = (userId) => `user:${userId}`;
+const conversationRoom = (conversationId) => `conversation:${conversationId}`;
+
+const attachUnreadCounts = async (conversations, userId) => {
+    const conversationIds = conversations.map((conversation) => conversation._id);
+
+    if (!conversationIds.length) {
+        return [];
+    }
+
+    const unreadCounts = await Message.aggregate([
+        {
+            $match: {
+                conversation: { $in: conversationIds },
+                sender: { $ne: userId },
+                readBy: { $ne: userId },
+            },
+        },
+        {
+            $group: {
+                _id: "$conversation",
+                unreadCount: { $sum: 1 },
+            },
+        },
+    ]);
+
+    const unreadMap = new Map(
+        unreadCounts.map((item) => [item._id.toString(), item.unreadCount]),
+    );
+
+    return conversations.map((conversation) => {
+        const conversationObject = conversation.toObject
+            ? conversation.toObject()
+            : conversation;
+
+        return {
+            ...conversationObject,
+            unreadCount: unreadMap.get(conversation._id.toString()) || 0,
+        };
+    });
+};
+
+const emitConversationUpdate = (io, conversation) => {
+    conversation.members.forEach((member) => {
+        io.to(userRoom(member._id.toString())).emit("conversationUpdated", conversation);
+    });
+};
+
+const createSystemMessage = async ({
+    io,
+    conversation,
+    actorId,
+    text,
+}) => {
+    const memberIds = conversation.members.map((member) => member._id);
+
+    let message = await Message.create({
+        conversation: conversation._id,
+        sender: actorId,
+        text,
+        messageType: "system",
+        readBy: [actorId],
+        deliveredTo: memberIds,
+    });
+
+    message = await message.populate(messagePopulate);
+
+    const updatedConversation = await Conversation.findByIdAndUpdate(
+        conversation._id,
+        {
+            lastMessage: message._id,
+            updatedAt: new Date(),
+        },
+        { new: true, timestamps: false },
+    ).populate(conversationPopulate);
+
+    io.to(conversationRoom(conversation._id.toString())).emit("newMessage", message);
+    emitConversationUpdate(io, updatedConversation);
+
+    return updatedConversation;
+};
+
 const getUsers = async (req, res) => {
     const users = await User.find({
         _id: { $ne: req.user._id },
@@ -62,7 +144,12 @@ const getOrCreatePrivateConversation = async (req, res) => {
             conversation = await populateConversationDocument(conversation);
         }
 
-        return res.status(200).json({ conversation });
+        const [conversationWithUnread] = await attachUnreadCounts(
+            [conversation],
+            req.user._id,
+        );
+
+        return res.status(200).json({ conversation: conversationWithUnread });
     } catch (error) {
         return res.status(500).json({
             message: "Unable to open private chat",
@@ -96,7 +183,12 @@ const createGroupConversation = async (req, res) => {
 
     const populatedConversation = await populateConversationDocument(conversation);
 
-    return res.status(201).json({ conversation: populatedConversation });
+    const [conversationWithUnread] = await attachUnreadCounts(
+        [populatedConversation],
+        req.user._id,
+    );
+
+    return res.status(201).json({ conversation: conversationWithUnread });
 };
 
 const getConversations = async (req, res) => {
@@ -106,7 +198,12 @@ const getConversations = async (req, res) => {
         .populate(conversationPopulate)
         .sort({ updatedAt: -1 });
 
-    return res.status(200).json({ conversations });
+    const conversationsWithUnread = await attachUnreadCounts(
+        conversations,
+        req.user._id,
+    );
+
+    return res.status(200).json({ conversations: conversationsWithUnread });
 };
 
 const getMessages = async (req, res) => {
@@ -162,6 +259,9 @@ const addMembersToGroup = async (req, res) => {
     }
 
     const validIds = [...new Set(memberIds.filter((id) => isValidObjectId(id)))];
+    const usersToAdd = await User.find({
+        _id: { $in: validIds },
+    }).select("username");
 
     conversation = await Conversation.findByIdAndUpdate(
         conversationId,
@@ -173,7 +273,26 @@ const addMembersToGroup = async (req, res) => {
         { new: true },
     ).populate(conversationPopulate);
 
-    return res.status(200).json({ conversation });
+    const addedUsers = usersToAdd.filter((user) =>
+        conversation.members.some((member) => member._id.toString() === user._id.toString()),
+    );
+
+    if (addedUsers.length) {
+        const names = addedUsers.map((user) => user.username).join(", ");
+        conversation = await createSystemMessage({
+            io: req.app.get("io"),
+            conversation,
+            actorId: req.user._id,
+            text: `${req.user.username} added ${names}`,
+        });
+    }
+
+    const [conversationWithUnread] = await attachUnreadCounts(
+        [conversation],
+        req.user._id,
+    );
+
+    return res.status(200).json({ conversation: conversationWithUnread });
 };
 
 const removeMemberFromGroup = async (req, res) => {
@@ -197,6 +316,10 @@ const removeMemberFromGroup = async (req, res) => {
             .json({ message: "Only group admins can remove members" });
     }
 
+    const memberToRemove = conversation.members.find(
+        (member) => member._id.toString() === memberId,
+    );
+
     conversation = await Conversation.findByIdAndUpdate(
         conversationId,
         {
@@ -208,7 +331,21 @@ const removeMemberFromGroup = async (req, res) => {
         { new: true },
     ).populate(conversationPopulate);
 
-    return res.status(200).json({ conversation });
+    if (memberToRemove) {
+        conversation = await createSystemMessage({
+            io: req.app.get("io"),
+            conversation,
+            actorId: req.user._id,
+            text: `${req.user.username} removed ${memberToRemove.username}`,
+        });
+    }
+
+    const [conversationWithUnread] = await attachUnreadCounts(
+        [conversation],
+        req.user._id,
+    );
+
+    return res.status(200).json({ conversation: conversationWithUnread });
 };
 
 const renameGroup = async (req, res) => {
@@ -241,7 +378,12 @@ const renameGroup = async (req, res) => {
         { new: true },
     ).populate(conversationPopulate);
 
-    return res.status(200).json({ conversation });
+    const [conversationWithUnread] = await attachUnreadCounts(
+        [conversation],
+        req.user._id,
+    );
+
+    return res.status(200).json({ conversation: conversationWithUnread });
 };
 
 const leaveGroup = async (req, res) => {
@@ -290,9 +432,18 @@ const leaveGroup = async (req, res) => {
         { new: true },
     ).populate(conversationPopulate);
 
+    conversation = await createSystemMessage({
+        io: req.app.get("io"),
+        conversation,
+        actorId: req.user._id,
+        text: `${req.user.username} left the group`,
+    });
+
     return res.status(200).json({
         message: "You left the group",
-        conversation,
+        conversation: (
+            await attachUnreadCounts([conversation], req.user._id)
+        )[0],
     });
 };
 

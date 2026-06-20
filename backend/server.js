@@ -35,6 +35,8 @@ const io = new Server(server, {
     },
 });
 
+app.set("io", io);
+
 app.use("/api/auth", authRoutes);
 app.use("/api/chat", chatRoutes);
 
